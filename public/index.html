@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>YouTube Video Downloader</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8eaed;
+    --muted: #9aa0ab;
+    --accent: #ff3b3b;
+    --accent-hover: #e62e2e;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 520px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px;
+  }
+
+  h1 {
+    font-size: 22px;
+    margin: 0 0 4px;
+  }
+
+  p.subtitle {
+    margin: 0 0 24px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    padding: 12px 14px;
+    background: #0f1115;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+
+  input[type="text"]:focus {
+    border-color: var(--accent);
+  }
+
+  button {
+    padding: 12px 16px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  button:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .preview {
+    margin-top: 20px;
+    display: none;
+    gap: 14px;
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+  }
+
+  .preview.visible {
+    display: flex;
+  }
+
+  .preview img {
+    width: 120px;
+    height: 68px;
+    object-fit: cover;
+    border-radius: 8px;
+    background: #000;
+    flex-shrink: 0;
+  }
+
+  .preview-info {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .preview-info .title {
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .preview-info .meta {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .status {
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--muted);
+    min-height: 18px;
+  }
+
+  .status.error {
+    color: var(--accent);
+  }
+
+  .status.success {
+    color: #4ade80;
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 13px;
+    height: 13px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  footer {
+    margin-top: 24px;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+  <div class="card">
+    <h1>YouTube Downloader</h1>
+    <p class="subtitle">Paste a YouTube link to fetch the highest-quality MP4.</p>
+
+    <form id="downloadForm">
+      <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" required />
+      <button type="submit" id="downloadBtn">Download MP4</button>
+    </form>
+
+    <div class="preview" id="preview">
+      <img id="previewThumb" src="" alt="thumbnail" />
+      <div class="preview-info">
+        <div class="title" id="previewTitle"></div>
+        <div class="meta" id="previewMeta"></div>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <footer>For personal use only. Respect YouTube's Terms of Service and copyright law.</footer>
+  </div>
+
+<script>
+  const form = document.getElementById('downloadForm');
+  const urlInput = document.getElementById('urlInput');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const statusEl = document.getElementById('status');
+  const preview = document.getElementById('preview');
+  const previewThumb = document.getElementById('previewThumb');
+  const previewTitle = document.getElementById('previewTitle');
+  const previewMeta = document.getElementById('previewMeta');
+
+  let debounceTimer = null;
+
+  function formatDuration(seconds) {
+    seconds = parseInt(seconds, 10) || 0;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function setStatus(message, type = '') {
+    statusEl.textContent = message;
+    statusEl.className = 'status' + (type ? ' ' + type : '');
+  }
+
+  async function fetchPreview(url) {
+    if (!url) {
+      preview.classList.remove('visible');
+      return;
+    }
+    try {
+      const res = await fetch('/api/info?url=' + encodeURIComponent(url));
+      const data = await res.json();
+      if (!res.ok) {
+        preview.classList.remove('visible');
+        return;
+      }
+      previewThumb.src = data.thumbnail || '';
+      previewTitle.textContent = data.title;
+      previewMeta.textContent = `${data.author} · ${formatDuration(data.lengthSeconds)}`;
+      preview.classList.add('visible');
+    } catch {
+      preview.classList.remove('visible');
+    }
+  }
+
+  urlInput.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    const url = urlInput.value.trim();
+    debounceTimer = setTimeout(() => fetchPreview(url), 500);
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = urlInput.value.trim();
+    if (!url) return;
+
+    downloadBtn.disabled = true;
+    setStatus('Preparing download, this can take a moment...');
+    statusEl.innerHTML = '<span class="spinner"></span> Preparing download, this can take a moment...';
+
+    try {
+      const res = await fetch('/api/download?url=' + encodeURIComponent(url));
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Download failed.');
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="(.+)"/);
+      const filename = match ? match[1] : 'video.mp4';
+
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+
+      setStatus('Video downloaded successfully!', 'success');
+    } catch (err) {
+      setStatus(err.message || 'Something went wrong.', 'error');
+    } finally {
+      downloadBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
